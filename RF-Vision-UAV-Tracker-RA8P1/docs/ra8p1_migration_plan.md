@@ -94,19 +94,19 @@ Optional later upgrade:
 Boot packet:
 
 ```json
-{"type":"boot","device":"RA8P1-RF-EDGE-001","platform":"RA8P1","os":"RT-Thread"}
+{"type":"boot","device":"RA8P1-RF-EDGE-001","seq":1,"uptime_ms":120,"platform":"RA8P1","os":"RT-Thread"}
 ```
 
 Status packet:
 
 ```json
-{"type":"status","device":"RA8P1-RF-EDGE-001","freq_mhz":5785,"score_q10":1024,"confidence":33,"confirm":1}
+{"type":"status","device":"RA8P1-RF-EDGE-001","seq":2,"uptime_ms":250,"freq_mhz":5785,"score_q10":1024,"confidence":33,"confirm":1}
 ```
 
 Alert packet:
 
 ```json
-{"type":"uav_alert","device":"RA8P1-RF-EDGE-001","freq_mhz":5785,"score_q10":2300,"confidence":74,"confirm":3}
+{"type":"uav_alert","device":"RA8P1-RF-EDGE-001","seq":5,"uptime_ms":2250,"freq_mhz":5785,"score_q10":2300,"confidence":74,"confirm":3}
 ```
 
 Fields to add once hardware support is ready:
@@ -119,9 +119,32 @@ Fields to add once hardware support is ready:
 
 ## Next Integration Steps
 
-1. Replace `mock_sdr_read()` in `src/hal_entry.c` with an SDR driver interface.
+1. Replace `src/sdr_frontend_mock.c` with an SDR driver backend that implements `sdr_frontend_read()`.
 2. Enable RT-Thread network stack and choose Ethernet or 5G modem transport.
 3. Replace console output in `src/telemetry.c` with UDP or MQTT.
 4. Add center-server receiver that stores terminal events and renders them on a map.
 5. Tune `APP_SCORE_THRESHOLD_Q10` and `APP_CONFIRM_REQUIRED` using field IQ data.
+
+## Terminal Self-Test Commands
+
+The RA8P1 terminal exports MSH commands while `FINSH_USING_MSH` is enabled:
+
+```text
+rf_info         Print device ID, thresholds, center endpoint, and transport.
+rf_send_status  Emit one synthetic status packet through the active transport.
+rf_send_test    Emit one synthetic alert packet through the active transport.
+```
+
+## UDP Transport Path
+
+`src/telemetry_transport_udp_stub.c` already contains the UDP sender guarded by
+`APP_TELEMETRY_TRANSPORT == APP_TELEMETRY_TRANSPORT_UDP` and `RT_USING_SAL`.
+The terminal remains in console mode until Ethernet, lwIP, and SAL are enabled.
+
+Switching to UDP requires:
+
+1. Enable RT-Thread Ethernet/lwIP/SAL configuration.
+2. Confirm RA8P1 has an IP address on the switch LAN.
+3. Set `APP_TELEMETRY_TRANSPORT` to `APP_TELEMETRY_TRANSPORT_UDP`.
+4. Keep `APP_TELEMETRY_CENTER_HOST` as the center machine IP.
 

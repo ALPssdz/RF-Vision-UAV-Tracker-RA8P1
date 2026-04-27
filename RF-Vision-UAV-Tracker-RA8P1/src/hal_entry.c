@@ -3,6 +3,7 @@
 #include "app_config.h"
 #include "app_types.h"
 #include "rf_detector_simple.h"
+#include "sdr_frontend.h"
 #include "status_led.h"
 #include "telemetry.h"
 
@@ -10,29 +11,12 @@
 #define DBG_LVL     DBG_LOG
 #include <rtdbg.h>
 
-static const rt_uint32_t g_sector_freq_mhz[APP_SECTOR_COUNT] = {5745U, 5785U, 5825U};
-
-static void mock_sdr_read(app_rf_sample_t * sample, rt_uint32_t tick, rt_uint32_t sector_index)
-{
-    rt_uint32_t cycle = tick % 32U;
-
-    sample->center_freq_mhz = g_sector_freq_mhz[sector_index];
-    sample->noise_floor_q10 = 1024U;
-    sample->rssi_q10 = 980U + sector_index * 24U;
-    sample->kurtosis_q8 = 3U * APP_KURTOSIS_SCALE;
-
-    if ((sector_index == 1U) && (cycle >= 8U) && (cycle <= 18U))
-    {
-        sample->rssi_q10 = 1880U;
-        sample->kurtosis_q8 = 6U * APP_KURTOSIS_SCALE;
-    }
-}
-
 static void detector_thread_entry(void * parameter)
 {
     rt_uint32_t tick = 0;
     rt_uint32_t sector = 0;
     rt_bool_t last_alert[APP_SECTOR_COUNT] = {RT_FALSE};
+    rt_uint32_t cooldown[APP_SECTOR_COUNT] = {0U};
 
     RT_UNUSED(parameter);
 
@@ -45,15 +29,27 @@ static void detector_thread_entry(void * parameter)
         app_detection_event_t event;
         rt_bool_t detected;
 
-        mock_sdr_read(&sample, tick, sector);
+        if (sdr_frontend_read(sector, &sample) != RT_EOK)
+        {
+            LOG_W("sdr read failed: sector=%u", sector);
+            rt_thread_mdelay(APP_DETECT_PERIOD_MS);
+            continue;
+        }
+
         detected = rf_detector_process(&sample, &event);
+
+        if (cooldown[sector] > 0U)
+        {
+            cooldown[sector]--;
+        }
 
         if (detected)
         {
             status_led_set_alert();
-            if (!last_alert[sector])
+            if ((!last_alert[sector]) && (cooldown[sector] == 0U))
             {
                 telemetry_send_alert(&event);
+                cooldown[sector] = APP_ALERT_COOLDOWN_TICKS;
             }
         }
         else
@@ -96,6 +92,13 @@ void hal_entry(void)
     telemetry_init();
     telemetry_send_boot();
 
+    if (sdr_frontend_init() != RT_EOK)
+    {
+        LOG_E("failed to initialize sdr frontend");
+        status_led_set_idle();
+        return;
+    }
+
     detector_thread = rt_thread_create("rf_detect",
                                        detector_thread_entry,
                                        RT_NULL,
@@ -126,4 +129,3 @@ void hal_entry(void)
         LOG_E("failed to create heartbeat thread");
     }
 }
-
